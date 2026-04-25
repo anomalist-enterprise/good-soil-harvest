@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { prisma } from "@/lib/prisma";
+import { dbAll, toDate } from "@/lib/db";
 
 const SITE = "https://www.goodsoilharvest.com";
 
@@ -20,19 +20,18 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   try {
-    const posts = await prisma.post.findMany({
-      where: { status: "PUBLISHED" },
-      select: { slug: true, publishedAt: true, updatedAt: true },
-    });
+    const posts = await dbAll<{ slug: string; published_at: string | null; updated_at: string }>(
+      `SELECT slug, published_at, updated_at FROM posts WHERE status = ?`,
+      "PUBLISHED",
+    );
     const postRoutes: MetadataRoute.Sitemap = posts.map(p => ({
       url: `${SITE}/blog/${p.slug}`,
-      lastModified: p.updatedAt ?? p.publishedAt ?? undefined,
+      lastModified: toDate(p.updated_at) ?? toDate(p.published_at) ?? undefined,
       changeFrequency: "monthly",
       priority: 0.6,
     }));
     return [...staticRoutes, ...postRoutes];
   } catch {
-    // If DB is unreachable, still return static routes
     return staticRoutes;
   }
 }

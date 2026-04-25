@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { dbAll, type PostRow, fromBit, toDate } from "@/lib/db";
 import { niches } from "@/lib/config";
 import { notFound } from "next/navigation";
 import Link from "next/link";
@@ -25,10 +25,21 @@ export default async function NichePage({
   const niche = niches.find((n) => n.slug === slug);
   if (!niche) notFound();
 
-  const posts = await prisma.post.findMany({
-    where: { niche: niche.slug as "faith" | "finance" | "psychology" | "philosophy" | "science", status: "PUBLISHED" },
-    orderBy: { publishedAt: "desc" },
-  });
+  const rows = await dbAll<PostRow>(
+    `SELECT * FROM posts WHERE niche = ? AND status = ? ORDER BY published_at DESC`,
+    niche.slug, "PUBLISHED",
+  );
+  const posts = rows.map(r => ({
+    id: r.id,
+    slug: r.slug,
+    title: r.title,
+    description: r.description,
+    niche: r.niche,
+    isPremium: fromBit(r.is_premium),
+    isDeepRoots: fromBit(r.is_deep_roots),
+    featuredImage: r.featured_image,
+    publishedAt: toDate(r.published_at),
+  }));
 
   return (
     <div className="max-w-[var(--max-w-content)] mx-auto px-4 sm:px-6 py-14">

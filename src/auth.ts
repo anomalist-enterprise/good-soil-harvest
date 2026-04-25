@@ -1,14 +1,15 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { prisma } from "@/lib/prisma";
+import { dbFirst, dbRun, type UserRow, type SubscriptionRow } from "@/lib/db";
 import { rateLimit } from "@/lib/rate-limit";
 import bcrypt from "bcryptjs";
 import authConfig from "./auth.config";
 
-// auth.ts: full NextAuth setup with Prisma + bcrypt. Used by API routes,
-// server components, and the auth handlers. The proxy/middleware runs on
-// the edge runtime and uses auth.config directly to avoid pulling in this
-// module's DB dependencies.
+// auth.ts: full NextAuth setup. Migrated off Prisma to raw D1 in Phase 2 of
+// the Cloudflare migration (Prisma 7 + Workers triggered runtime Wasm
+// compilation which Workers blocks). Used by API routes, server components,
+// and the auth handlers. The proxy/middleware runs on the edge runtime and
+// uses auth.config directly to avoid pulling in this module's DB deps.
 export const { handlers, signIn, signOut, auth } = NextAuth({
   ...authConfig,
   providers: [
@@ -41,44 +42,46 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           }
         }
 
-        const user = await prisma.user.findUnique({
-          where: { email: emailLower },
-          include: { subscription: true },
-        });
+        // User + subscription in a single LEFT JOIN
+        const row = await dbFirst<UserRow & {
+          sub_plan: SubscriptionRow["plan"];
+          sub_status: SubscriptionRow["status"];
+        }>(
+          `SELECT u.*, s.plan AS sub_plan, s.status AS sub_status
+           FROM users u
+           LEFT JOIN subscriptions s ON s.user_id = u.id
+           WHERE u.email = ?`,
+          emailLower,
+        );
 
-        if (!user) return null;
+        if (!row) return null;
 
         // One-time login token path (post-email-verification auto-login)
         if (credentials.loginToken) {
-          if (
-            !user.verifyToken ||
-            user.verifyToken !== (credentials.loginToken as string) ||
-            !user.verifyTokenExp ||
-            user.verifyTokenExp < new Date()
-          ) {
-            return null;
-          }
-          // Consume the token
-          await prisma.user.update({
-            where: { id: user.id },
-            data: { verifyToken: null, verifyTokenExp: null },
-          });
+          const tokenMatches = row.verify_token === (credentials.loginToken as string);
+          const expMs = row.verify_token_exp ? Date.parse(row.verify_token_exp.replace(" ", "T") + "Z") : 0;
+          const tokenValid = tokenMatches && expMs > Date.now();
+          if (!row.verify_token || !tokenValid) return null;
+          await dbRun(
+            `UPDATE users SET verify_token = NULL, verify_token_exp = NULL WHERE id = ?`,
+            row.id,
+          );
         } else {
           // Normal password path
-          if (!credentials.password || !user.passwordHash) return null;
+          if (!credentials.password || !row.password_hash) return null;
           const valid = await bcrypt.compare(
             credentials.password as string,
-            user.passwordHash
+            row.password_hash,
           );
           if (!valid) return null;
         }
 
         return {
-          id: user.id,
-          email: user.email ?? "",
-          role: user.role as string,
-          subscriptionPlan: (user.subscription?.plan as string | null) ?? null,
-          subscriptionStatus: (user.subscription?.status as string | null) ?? null,
+          id: row.id,
+          email: row.email ?? "",
+          role: row.role as string,
+          subscriptionPlan: row.sub_plan ?? null,
+          subscriptionStatus: row.sub_status ?? null,
         };
       },
     }),

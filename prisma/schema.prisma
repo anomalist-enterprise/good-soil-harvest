@@ -1,5 +1,9 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // queryCompiler: Prisma generates a JS-only query implementation at build
+  // time instead of loading a Rust/Wasm query engine at runtime. Required
+  // for Cloudflare Workers, which disallows runtime Wasm compilation.
+  previewFeatures = ["queryCompiler", "driverAdapters"]
 }
 
 datasource db {

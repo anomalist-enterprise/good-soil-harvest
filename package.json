@@ -16,6 +16,7 @@
     "@anthropic-ai/sdk": "^0.85.0",
     "@auth/prisma-adapter": "^2.11.1",
     "@neondatabase/serverless": "^1.0.2",
+    "@paralleldrive/cuid2": "^3.3.0",
     "@prisma/adapter-neon": "^7.6.0",
     "@prisma/client": "^7.6.0",
     "@vercel/analytics": "^2.0.1",

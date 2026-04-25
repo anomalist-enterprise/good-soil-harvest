@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { dbFirst, dbRun, nowISO } from "@/lib/db";
 
 // Simple DB-backed sliding-window rate limiter.
 // Returns { ok: true } if request is allowed, or { ok: false, retryAfterSeconds }
@@ -16,32 +16,34 @@ export async function rateLimit(opts: {
   const key = `${opts.action}:${opts.identifier.toLowerCase()}`;
   const now = new Date();
   const windowMs = opts.windowSeconds * 1000;
-  const windowCutoff = new Date(now.getTime() - windowMs);
+  const windowCutoffISO = new Date(now.getTime() - windowMs).toISOString().replace("T", " ").slice(0, 19);
 
-  // Get current record if it exists
-  const existing = await prisma.rateLimit.findUnique({ where: { key } });
+  const existing = await dbFirst<{ key: string; count: number; window_start: string }>(
+    `SELECT key, count, window_start FROM rate_limits WHERE key = ?`,
+    key,
+  );
 
-  if (!existing || existing.windowStart < windowCutoff) {
-    // No record, or the old window has expired — start fresh
-    await prisma.rateLimit.upsert({
-      where: { key },
-      create: { key, count: 1, windowStart: now },
-      update: { count: 1, windowStart: now },
-    });
+  // Compare window_start as-is; SQLite stores "YYYY-MM-DD HH:MM:SS" strings
+  // that lexically sort the same way as Date order.
+  if (!existing || existing.window_start < windowCutoffISO) {
+    // No record, or old window expired — reset to 1
+    await dbRun(
+      `INSERT INTO rate_limits (key, count, window_start) VALUES (?, 1, ?)
+       ON CONFLICT(key) DO UPDATE SET count = 1, window_start = excluded.window_start`,
+      key, nowISO(),
+    );
     return { ok: true };
   }
 
   // Within the current window
   if (existing.count >= opts.max) {
-    const elapsed = now.getTime() - existing.windowStart.getTime();
+    const windowStartMs = Date.parse(existing.window_start.replace(" ", "T") + "Z");
+    const elapsed = now.getTime() - windowStartMs;
     const retryAfterSeconds = Math.ceil((windowMs - elapsed) / 1000);
     return { ok: false, retryAfterSeconds: Math.max(retryAfterSeconds, 1) };
   }
 
-  await prisma.rateLimit.update({
-    where: { key },
-    data: { count: { increment: 1 } },
-  });
+  await dbRun(`UPDATE rate_limits SET count = count + 1 WHERE key = ?`, key);
   return { ok: true };
 }
 

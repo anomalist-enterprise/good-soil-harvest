@@ -1,5 +1,26 @@
-import { prisma } from "@/lib/prisma";
+import { dbFirst, dbRun, type PostRow, type SubscriptionRow, fromBit, toDate, createId, nowISO } from "@/lib/db";
 import { notFound } from "next/navigation";
+
+// Hydrate a PostRow from D1 (snake_case) into the camelCase shape used by
+// the rest of this file. Keeps the existing template untouched.
+function hydratePost(r: PostRow) {
+  return {
+    id: r.id,
+    slug: r.slug,
+    title: r.title,
+    description: r.description,
+    content: r.content,
+    niche: r.niche,
+    isPremium: fromBit(r.is_premium),
+    isDeepRoots: fromBit(r.is_deep_roots),
+    featuredImage: r.featured_image,
+    references: r.refs,
+    status: r.status,
+    publishedAt: toDate(r.published_at),
+    createdAt: toDate(r.created_at),
+    updatedAt: toDate(r.updated_at),
+  };
+}
 import { niches } from "@/lib/config";
 import Link from "next/link";
 import { MDXRemote } from "next-mdx-remote/rsc";
@@ -22,8 +43,9 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const post = await prisma.post.findUnique({ where: { slug } });
-  if (!post) return {};
+  const row = await dbFirst<PostRow>(`SELECT * FROM posts WHERE slug = ?`, slug);
+  if (!row) return {};
+  const post = hydratePost(row);
 
   const url = `${SITE}/blog/${post.slug}`;
   const ogImage = `${SITE}/api/og?title=${encodeURIComponent(post.title)}&niche=${encodeURIComponent(post.niche)}`;
@@ -56,11 +78,12 @@ export default async function PostPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const post = await prisma.post.findUnique({
-    where: { slug, status: "PUBLISHED" },
-  });
-
-  if (!post) notFound();
+  const row = await dbFirst<PostRow>(
+    `SELECT * FROM posts WHERE slug = ? AND status = ?`,
+    slug, "PUBLISHED",
+  );
+  if (!row) notFound();
+  const post = hydratePost(row);
 
   const niche = nicheMap[post.niche];
 
@@ -77,7 +100,9 @@ export default async function PostPage({
   if (session?.user?.role === "ADMIN") {
     viewerPlan = "ADMIN";
   } else if (userId) {
-    const sub = await prisma.subscription.findUnique({ where: { userId } });
+    const sub = await dbFirst<SubscriptionRow>(
+      `SELECT plan, status FROM subscriptions WHERE user_id = ?`, userId,
+    );
     if (sub?.status === "ACTIVE") {
       if (sub.plan === "DEEP_ROOTS") viewerPlan = "DEEP_ROOTS";
       else if (sub.plan === "SEEDLING") viewerPlan = "SEEDLING";
@@ -97,25 +122,41 @@ export default async function PostPage({
   // Track view + check like status for authenticated users
   if (userId && accessGranted) {
     const [like] = await Promise.all([
-      prisma.postLike.findUnique({
-        where: { userId_postId: { userId, postId: post.id } },
-      }),
-      prisma.postView.upsert({
-        where: { userId_postId: { userId, postId: post.id } },
-        create: { userId, postId: post.id },
-        update: { viewedAt: new Date() },
-      }),
+      dbFirst<{ id: string }>(
+        `SELECT id FROM post_likes WHERE user_id = ? AND post_id = ?`,
+        userId, post.id,
+      ),
+      // Upsert: insert or bump viewed_at on conflict
+      dbRun(
+        `INSERT INTO post_views (id, user_id, post_id, viewed_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (user_id, post_id) DO UPDATE SET viewed_at = excluded.viewed_at`,
+        createId(), userId, post.id, nowISO(),
+      ),
     ]);
     isLiked = !!like;
   }
 
   // Related posts — same niche, different post, max 3
-  const relatedPosts = await prisma.post.findMany({
-    where: { niche: post.niche, status: "PUBLISHED", id: { not: post.id } },
-    orderBy: { publishedAt: "desc" },
-    take: 3,
-    select: { slug: true, title: true, description: true, featuredImage: true, niche: true, isPremium: true, isDeepRoots: true },
-  });
+  const relatedRows = await (async () => {
+    const { dbAll } = await import("@/lib/db");
+    return dbAll<Pick<PostRow, "slug" | "title" | "description" | "featured_image" | "niche" | "is_premium" | "is_deep_roots">>(
+      `SELECT slug, title, description, featured_image, niche, is_premium, is_deep_roots
+       FROM posts
+       WHERE niche = ? AND status = ? AND id != ?
+       ORDER BY published_at DESC
+       LIMIT 3`,
+      post.niche, "PUBLISHED", post.id,
+    );
+  })();
+  const relatedPosts = relatedRows.map(r => ({
+    slug: r.slug,
+    title: r.title,
+    description: r.description,
+    featuredImage: r.featured_image,
+    niche: r.niche,
+    isPremium: fromBit(r.is_premium),
+    isDeepRoots: fromBit(r.is_deep_roots),
+  }));
 
   return (
     <>

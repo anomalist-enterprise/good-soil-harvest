@@ -21,5 +21,13 @@
   },
   "observability": {
     "enabled": true
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "good-soil-harvest",
+      "database_id": "7c399e0b-7e25-40e5-bc79-25e2924eddfb",
+      "migrations_dir": "migrations"
+    }
+  ]
 }
