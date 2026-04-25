@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { dbAll, dbFirst, type PostRow, type UserRow, type SubscriptionRow, fromBit, toDate } from "@/lib/db";
 import { getSuggestions, getLikedPosts, getViewedPosts } from "@/lib/suggestions";
 import DashboardClient from "./DashboardClient";
 
@@ -10,39 +10,47 @@ export default async function DashboardPage() {
 
   const userId = session.user.id;
 
-  // Always read user + subscription from DB — JWT token can be stale after sync
   const [user, sub] = await Promise.all([
-    prisma.user.findUnique({ where: { id: userId }, select: { role: true } }),
-    prisma.subscription.findUnique({
-      where: { userId },
-      select: { status: true, plan: true, trialEnd: true },
-    }),
+    dbFirst<Pick<UserRow, "role">>(`SELECT role FROM users WHERE id = ?`, userId),
+    dbFirst<Pick<SubscriptionRow, "status" | "plan" | "trial_end">>(
+      `SELECT status, plan, trial_end FROM subscriptions WHERE user_id = ?`, userId,
+    ),
   ]);
 
-  // ADMIN users get Deep Roots access automatically — no Stripe needed.
-  // Owner comp accounts are common SaaS practice.
   const isAdmin = user?.role === "ADMIN";
   const isPaid = isAdmin || sub?.status === "ACTIVE";
   const isDeepRoots = isAdmin || (isPaid && sub?.plan === "DEEP_ROOTS");
   const plan = isAdmin ? "DEEP_ROOTS" : ((sub?.plan as string | null) ?? null);
 
-  const [suggestions, liked, history, totalPosts] = await Promise.all([
+  const [suggestions, liked, history, totalRow] = await Promise.all([
     isPaid ? getSuggestions(userId) : Promise.resolve([]),
     isPaid ? getLikedPosts(userId)  : Promise.resolve([]),
     isPaid ? getViewedPosts(userId) : Promise.resolve([]),
-    prisma.post.count({ where: { status: "PUBLISHED" } }),
+    dbFirst<{ n: number }>(`SELECT COUNT(*) AS n FROM posts WHERE status = ?`, "PUBLISHED"),
   ]);
+  const totalPosts = totalRow?.n ?? 0;
 
-  const browse = await prisma.post.findMany({
-    where: { status: "PUBLISHED" },
-    select: {
-      id: true, slug: true, title: true, description: true,
-      niche: true, isPremium: true, isDeepRoots: true, publishedAt: true,
-      featuredImage: true,
-    },
-    orderBy: { publishedAt: "desc" },
-    take: 24,
-  });
+  const browseRows = await dbAll<Pick<PostRow, "id" | "slug" | "title" | "description" | "niche" | "is_premium" | "is_deep_roots" | "published_at" | "featured_image">>(
+    `SELECT id, slug, title, description, niche, is_premium, is_deep_roots, published_at, featured_image
+     FROM posts
+     WHERE status = ?
+     ORDER BY published_at DESC
+     LIMIT 24`,
+    "PUBLISHED",
+  );
+  const browse = browseRows.map(r => ({
+    id: r.id,
+    slug: r.slug,
+    title: r.title,
+    description: r.description,
+    niche: r.niche,
+    isPremium: fromBit(r.is_premium),
+    isDeepRoots: fromBit(r.is_deep_roots),
+    publishedAt: toDate(r.published_at),
+    featuredImage: r.featured_image,
+  }));
+
+  const trialEndDate = toDate(sub?.trial_end ?? null);
 
   return (
     <DashboardClient
@@ -55,7 +63,7 @@ export default async function DashboardPage() {
       history={history}
       browse={browse}
       totalPosts={totalPosts}
-      trialEnd={sub?.trialEnd ? sub.trialEnd.toISOString() : null}
+      trialEnd={trialEndDate ? trialEndDate.toISOString() : null}
     />
   );
 }

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
+import { dbAll, type PostRow, fromBit, toDate } from "@/lib/db";
 import { findDuplicates } from "@/lib/duplicates";
 
 const nicheLabel: Record<string, string> = {
@@ -25,27 +25,34 @@ export default async function PostsPage({
 }) {
   const { status, niche } = await searchParams;
 
-  const posts = await prisma.post.findMany({
-    where: {
-      ...(status ? { status: status as never } : {}),
-      ...(niche  ? { niche:  niche  as never } : {}),
-    },
-    orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
-  });
+  const filters: string[] = [];
+  const binds: unknown[] = [];
+  if (status) { filters.push(`status = ?`); binds.push(status); }
+  if (niche)  { filters.push(`niche = ?`);  binds.push(niche); }
+  const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
 
-  // Compute duplicates across ALL posts (not just the filtered view) so
-  // the flag shows up regardless of which filter tab you're on.
-  const allPosts = await prisma.post.findMany({
-    select: { id: true, title: true, niche: true },
-    orderBy: { createdAt: "asc" },
-  });
+  const rows = await dbAll<PostRow>(
+    `SELECT * FROM posts ${where} ORDER BY status ASC, updated_at DESC`,
+    ...binds,
+  );
+  const posts = rows.map(r => ({
+    ...r,
+    isPremium: fromBit(r.is_premium),
+    isDeepRoots: fromBit(r.is_deep_roots),
+    publishedAt: toDate(r.published_at),
+    updatedAt: toDate(r.updated_at) ?? new Date(),
+  }));
+
+  // Compute duplicates across ALL posts so the flag shows up regardless of filter
+  const allPosts = await dbAll<{ id: string; title: string; niche: string }>(
+    `SELECT id, title, niche FROM posts ORDER BY created_at ASC`,
+  );
   const dupeMap = findDuplicates(allPosts);
 
-  const counts = await prisma.post.groupBy({
-    by: ["status"],
-    _count: true,
-  });
-  const countMap = Object.fromEntries(counts.map((c) => [c.status, c._count]));
+  const countRows = await dbAll<{ status: string; n: number }>(
+    `SELECT status, COUNT(*) AS n FROM posts GROUP BY status`,
+  );
+  const countMap = Object.fromEntries(countRows.map(c => [c.status, c.n]));
   const total = posts.length;
 
   const statuses = ["PUBLISHED", "APPROVED", "DRAFT", "ARCHIVED", "REJECTED"];

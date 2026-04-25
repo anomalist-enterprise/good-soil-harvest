@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { dbAll, dbRun, type FeedbackRow, nowISO } from "@/lib/db";
 import { sendFeedbackAlert } from "@/lib/email";
 
 // On-demand AI triage of un-triaged feedback. Called when admin opens
@@ -19,11 +19,9 @@ export async function POST() {
     );
   }
 
-  const untriaged = await prisma.feedback.findMany({
-    where: { aiTriagedAt: null },
-    take: 30, // bound the work per call
-    orderBy: { createdAt: "asc" },
-  });
+  const untriaged = await dbAll<FeedbackRow>(
+    `SELECT * FROM feedback WHERE ai_triaged_at IS NULL ORDER BY created_at ASC LIMIT 30`,
+  );
 
   if (untriaged.length === 0) {
     return NextResponse.json({ triaged: 0 });
@@ -33,7 +31,7 @@ export async function POST() {
   const numbered = untriaged
     .map(
       (f, i) =>
-        `[${i + 1}] type=${f.type} from=${f.email ?? "anonymous"} page=${f.pageUrl ?? "?"}\n${f.message}`
+        `[${i + 1}] type=${f.type} from=${f.email ?? "anonymous"} page=${f.page_url ?? "?"}\n${f.message}`
     )
     .join("\n\n---\n\n");
 
@@ -98,28 +96,20 @@ Output ONLY a JSON array of objects in order, one per item. No prose, no markdow
   }
 
   const validPriorities = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
-  const now = new Date();
+  const now = nowISO();
 
-  // Update each item with its triage
   await Promise.all(
     untriaged.map((item, i) => {
       const t = parsed[i];
       const priority = validPriorities.includes(t.priority) ? t.priority : "MEDIUM";
       const tags = Array.isArray(t.tags) ? t.tags.join(",") : "";
-      return prisma.feedback.update({
-        where: { id: item.id },
-        data: {
-          aiSummary: t.summary?.slice(0, 200) ?? null,
-          aiPriority: priority as "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
-          aiTags: tags,
-          aiTriagedAt: now,
-          status: "TRIAGED",
-        },
-      });
+      return dbRun(
+        `UPDATE feedback SET ai_summary = ?, ai_priority = ?, ai_tags = ?, ai_triaged_at = ?, status = 'TRIAGED' WHERE id = ?`,
+        t.summary?.slice(0, 200) ?? null, priority, tags, now, item.id,
+      );
     })
   );
 
-  // Email alert for CRITICAL or HIGH items
   const urgent = parsed
     .map((t, i) => ({ ...t, ...untriaged[i] }))
     .filter(t => t.priority === "CRITICAL" || t.priority === "HIGH");
@@ -130,7 +120,7 @@ Output ONLY a JSON array of objects in order, one per item. No prose, no markdow
         priority: u.priority,
         email: u.email,
         message: u.message,
-        pageUrl: u.pageUrl,
+        pageUrl: u.page_url,
       }))
     ).catch(err => console.error("[feedback/triage] alert email failed:", err));
   }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { dbFirst, dbRun, type UserRow } from "@/lib/db";
 import bcrypt from "bcryptjs";
 
 export async function POST(req: NextRequest) {
@@ -15,12 +15,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Both fields are required" }, { status: 400 });
   }
 
-  const user = await prisma.user.findUnique({ where: { id: session.user.id } });
-  if (!user?.passwordHash) {
+  const user = await dbFirst<UserRow>(`SELECT * FROM users WHERE id = ?`, session.user.id);
+  if (!user?.password_hash) {
     return NextResponse.json({ error: "Account not found" }, { status: 404 });
   }
 
-  const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+  const valid = await bcrypt.compare(currentPassword, user.password_hash);
   if (!valid) {
     return NextResponse.json({ error: "Current password is incorrect" }, { status: 400 });
   }
@@ -38,10 +38,7 @@ export async function POST(req: NextRequest) {
   }
 
   const newHash = await bcrypt.hash(newPassword, 12);
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { passwordHash: newHash },
-  });
+  await dbRun(`UPDATE users SET password_hash = ? WHERE id = ?`, newHash, user.id);
 
   return NextResponse.json({ ok: true });
 }

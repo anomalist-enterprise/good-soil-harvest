@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { dbFirst, dbRun, type UserRow } from "@/lib/db";
 import { sendVerificationEmail } from "@/lib/email";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -14,7 +14,6 @@ export async function POST(req: NextRequest) {
 
   const email = rawEmail.trim().toLowerCase();
 
-  // Rate limit: 3 resends per 10 minutes per email (prevent email bombing)
   const limit = await rateLimit({
     action: "resend-verification",
     identifier: email,
@@ -22,21 +21,21 @@ export async function POST(req: NextRequest) {
     windowSeconds: 60 * 10,
   });
   if (!limit.ok) {
-    return NextResponse.json({ ok: true }); // Silent drop, don't leak rate limit status
+    return NextResponse.json({ ok: true });
   }
 
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user || user.emailVerified) {
-    return NextResponse.json({ ok: true }); // Don't reveal whether account exists
+  const user = await dbFirst<UserRow>(`SELECT id, email_verified FROM users WHERE email = ?`, email);
+  if (!user || user.email_verified === 1) {
+    return NextResponse.json({ ok: true });
   }
 
   const code = generateCode();
-  const exp = new Date(Date.now() + 1000 * 60 * 30); // 30 minutes
+  const expISO = new Date(Date.now() + 1000 * 60 * 30).toISOString().replace("T", " ").slice(0, 19);
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { verifyToken: code, verifyTokenExp: exp },
-  });
+  await dbRun(
+    `UPDATE users SET verify_token = ?, verify_token_exp = ? WHERE id = ?`,
+    code, expISO, user.id,
+  );
 
   await sendVerificationEmail(email, code);
   return NextResponse.json({ ok: true });

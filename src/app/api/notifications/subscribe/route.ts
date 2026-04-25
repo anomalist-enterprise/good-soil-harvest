@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { dbAll, dbRun, createId, nowISO } from "@/lib/db";
 
 // Subscribe to push notifications and/or update topic preferences.
 // Body: { endpoint, p256dh, auth, niches?: string[], emailDigest?: boolean }
@@ -19,29 +19,21 @@ export async function POST(req: NextRequest) {
 
   const nicheStr = Array.isArray(niches) ? niches.join(",") : "";
 
-  // Prevent cross-user hijacking: only upsert if this endpoint belongs to
-  // the current user OR doesn't exist yet. Delete any stale record first.
-  await prisma.pushSubscription.deleteMany({
-    where: { endpoint, userId: { not: session.user.id } },
-  });
+  // Prevent cross-user hijacking: delete this endpoint if it belongs to a
+  // DIFFERENT user, then upsert under the current session.
+  await dbRun(`DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id != ?`, endpoint, session.user.id);
 
-  await prisma.pushSubscription.upsert({
-    where: { endpoint },
-    create: {
-      userId: session.user.id,
-      endpoint,
-      p256dh,
-      auth: authKey,
-      niches: nicheStr,
-      emailDigest: emailDigest ?? false,
-    },
-    update: {
-      p256dh,
-      auth: authKey,
-      niches: nicheStr,
-      emailDigest: emailDigest ?? false,
-    },
-  });
+  await dbRun(
+    `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, niches, email_digest, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(endpoint) DO UPDATE SET
+       p256dh = excluded.p256dh,
+       auth = excluded.auth,
+       niches = excluded.niches,
+       email_digest = excluded.email_digest`,
+    createId(), session.user.id, endpoint, p256dh, authKey,
+    nicheStr, emailDigest ? 1 : 0, nowISO(),
+  );
 
   return NextResponse.json({ ok: true });
 }
@@ -53,18 +45,19 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const subs = await prisma.pushSubscription.findMany({
-    where: { userId: session.user.id },
-    select: {
-      id: true,
-      endpoint: true,
-      niches: true,
-      emailDigest: true,
-      createdAt: true,
-    },
-  });
+  const rows = await dbAll<{ id: string; endpoint: string; niches: string; email_digest: 0 | 1; created_at: string }>(
+    `SELECT id, endpoint, niches, email_digest, created_at FROM push_subscriptions WHERE user_id = ?`,
+    session.user.id,
+  );
+  const subscriptions = rows.map(r => ({
+    id: r.id,
+    endpoint: r.endpoint,
+    niches: r.niches,
+    emailDigest: r.email_digest === 1,
+    createdAt: r.created_at,
+  }));
 
-  return NextResponse.json({ subscriptions: subs });
+  return NextResponse.json({ subscriptions });
 }
 
 // Unsubscribe from push notifications
@@ -79,9 +72,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "endpoint required" }, { status: 400 });
   }
 
-  await prisma.pushSubscription.deleteMany({
-    where: { userId: session.user.id, endpoint },
-  });
+  await dbRun(`DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?`, session.user.id, endpoint);
 
   return NextResponse.json({ ok: true });
 }

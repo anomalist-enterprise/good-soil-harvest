@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { stripe, PLANS, assertStripeUrl, type PlanKey } from "@/lib/stripe";
-import { prisma } from "@/lib/prisma";
+import { dbFirst, dbRun, createId, type UserRow, type SubscriptionRow } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,13 +10,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Block unverified accounts
-    const user = await prisma.user.findUnique({ where: { id: session.user.id! } });
-    if (user && !user.emailVerified) {
+    const user = await dbFirst<UserRow>(`SELECT * FROM users WHERE id = ?`, session.user.id!);
+    if (user && user.email_verified !== 1) {
       return NextResponse.json({ error: "unverified", email: session.user.email }, { status: 403 });
     }
 
-    // ADMIN users get free Deep Roots access — refuse to take their money
     if (user?.role === "ADMIN") {
       return NextResponse.json(
         { error: "admin_comp", message: "Admin accounts have free Deep Roots access" },
@@ -37,12 +35,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const existingSub = await prisma.subscription.findUnique({ where: { userId: session.user.id! } });
+    const existingSub = await dbFirst<SubscriptionRow>(
+      `SELECT * FROM subscriptions WHERE user_id = ?`, session.user.id!,
+    );
 
-    // ── Already has an active subscription? Tell client to use the portal flow ──
-    // (Plan changes need Stripe's confirmation UI for transparency around proration.)
     if (
-      existingSub?.stripeSubscriptionId &&
+      existingSub?.stripe_subscription_id &&
       (existingSub.status === "ACTIVE" || existingSub.status === "PAST_DUE")
     ) {
       return NextResponse.json(
@@ -51,14 +49,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── No existing subscription → create Checkout session (first time) ─────
-    let customerId = existingSub?.stripeCustomerId;
+    let customerId = existingSub?.stripe_customer_id;
     if (!customerId) {
-      // Avoid duplicate customers — search for an existing one by email first
       const existing = await stripe.customers.list({ email: session.user.email, limit: 1 });
       if (existing.data.length > 0) {
         customerId = existing.data[0].id;
-        // Update metadata so it links to this user
         await stripe.customers.update(customerId, {
           metadata: { userId: session.user.id! },
         });
@@ -76,9 +71,10 @@ export async function POST(req: NextRequest) {
       process.env.NEXTAUTH_URL ??
       "https://goodsoilharvest.com";
 
-    // Check if this email has already used a free trial (even if the prior account was deleted)
     const emailLower = session.user.email.toLowerCase();
-    const priorClaim = await prisma.trialClaim.findUnique({ where: { email: emailLower } });
+    const priorClaim = await dbFirst<{ email: string }>(
+      `SELECT email FROM trial_claims WHERE email = ?`, emailLower,
+    );
     const grantTrial = !priorClaim;
 
     const checkoutSession = await stripe.checkout.sessions.create({
@@ -95,11 +91,12 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Record the claim now so even if they cancel checkout halfway, repeated attempts don't get
-    // trial-granted infinitely. The webhook will mark it on actual subscription creation too.
     if (grantTrial) {
       try {
-        await prisma.trialClaim.create({ data: { email: emailLower } });
+        await dbRun(
+          `INSERT INTO trial_claims (id, email) VALUES (?, ?)`,
+          createId(), emailLower,
+        );
       } catch {
         // race — already exists, fine
       }

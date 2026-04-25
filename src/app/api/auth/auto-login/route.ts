@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { signIn } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { dbFirst, type UserRow } from "@/lib/db";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -16,24 +16,16 @@ export async function GET(req: NextRequest) {
 
   const email = rawEmail.trim().toLowerCase();
 
-  // Quick pre-check — if token is already gone or expired, bail early
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (
-    !user ||
-    !user.verifyToken ||
-    user.verifyToken !== token ||
-    !user.verifyTokenExp ||
-    user.verifyTokenExp < new Date()
-  ) {
+  const user = await dbFirst<UserRow>(`SELECT * FROM users WHERE email = ?`, email);
+  const valid = (() => {
+    if (!user || !user.verify_token || user.verify_token !== token || !user.verify_token_exp) return false;
+    return Date.parse(user.verify_token_exp.replace(" ", "T") + "Z") >= Date.now();
+  })();
+
+  if (!valid) {
     return NextResponse.redirect(new URL("/sign-in?error=expired", siteUrl));
   }
 
-  // Determine where to land after sign-in.
-  // If plan is present, hit the account page with ?checkout=PLAN so it
-  // auto-fires Stripe checkout once the session is established.
   const redirectTo = plan ? `/dashboard?checkout=${plan}` : "/dashboard";
-
-  // server-side signIn throws NEXT_REDIRECT — that becomes the response.
-  // The credentials authorize() function will validate + consume the token.
   await signIn("credentials", { email, loginToken: token, redirectTo });
 }

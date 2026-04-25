@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { dbFirst, dbRun, type UserRow } from "@/lib/db";
 import bcrypt from "bcryptjs";
 
 export async function POST(req: NextRequest) {
@@ -15,7 +15,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
-  // Same password rules as /register and /reset-password
   const pwErrors = [];
   if (newPassword.length < 8)             pwErrors.push("at least 8 characters");
   if (!/[A-Z]/.test(newPassword))         pwErrors.push("one uppercase letter");
@@ -28,24 +27,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const user = await prisma.user.findUnique({
-    where: { email: session.user.email! },
-  });
-
-  if (!user?.passwordHash) {
+  const user = await dbFirst<UserRow>(`SELECT * FROM users WHERE email = ?`, session.user.email!);
+  if (!user?.password_hash) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+  const valid = await bcrypt.compare(currentPassword, user.password_hash);
   if (!valid) {
     return NextResponse.json({ error: "Current password is incorrect" }, { status: 403 });
   }
 
   const newHash = await bcrypt.hash(newPassword, 13);
-  await prisma.user.update({
-    where: { email: session.user.email! },
-    data: { passwordHash: newHash },
-  });
+  await dbRun(`UPDATE users SET password_hash = ? WHERE email = ?`, newHash, session.user.email!);
 
   return NextResponse.json({ ok: true });
 }

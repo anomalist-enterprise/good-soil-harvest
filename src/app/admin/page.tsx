@@ -1,12 +1,15 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
+import { dbFirst } from "@/lib/db";
 
 export default async function AdminDashboard() {
-  const [pendingDrafts, publishedPosts, totalPosts] = await Promise.all([
-    prisma.agentDraft.count({ where: { status: "PENDING" } }),
-    prisma.post.count({ where: { status: "PUBLISHED" } }),
-    prisma.post.count(),
+  const [draftsRow, publishedRow, totalRow] = await Promise.all([
+    dbFirst<{ n: number }>(`SELECT COUNT(*) AS n FROM agent_drafts WHERE status = ?`, "PENDING"),
+    dbFirst<{ n: number }>(`SELECT COUNT(*) AS n FROM posts WHERE status = ?`, "PUBLISHED"),
+    dbFirst<{ n: number }>(`SELECT COUNT(*) AS n FROM posts`),
   ]);
+  const pendingDrafts = draftsRow?.n ?? 0;
+  const publishedPosts = publishedRow?.n ?? 0;
+  const totalPosts = totalRow?.n ?? 0;
 
   return (
     <>

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { dbFirst, dbRun, createId, type SubscriptionRow } from "@/lib/db";
 import { getStripe } from "@/lib/stripe";
 import type Stripe from "stripe";
 
@@ -13,29 +13,30 @@ export async function DELETE() {
   const userId = session.user.id;
   const userEmail = session.user.email?.toLowerCase() ?? null;
 
-  const subscription = await prisma.subscription.findUnique({ where: { userId } });
+  const subscription = await dbFirst<SubscriptionRow>(
+    `SELECT * FROM subscriptions WHERE user_id = ?`, userId,
+  );
   const stripe = getStripe();
 
   let refundedCents = 0;
 
-  if (subscription?.stripeSubscriptionId) {
+  if (subscription?.stripe_subscription_id) {
     try {
-      const stripeSub = await stripe.subscriptions.retrieve(subscription.stripeSubscriptionId);
+      const stripeSub = await stripe.subscriptions.retrieve(subscription.stripe_subscription_id);
       refundedCents = await issueProratedRefund(stripe, stripeSub);
     } catch (err) {
       console.error("[account/delete] refund path failed:", err);
     }
-
     try {
-      await stripe.subscriptions.cancel(subscription.stripeSubscriptionId);
+      await stripe.subscriptions.cancel(subscription.stripe_subscription_id);
     } catch (err) {
       console.error("[account/delete] subscription cancel failed (may already be canceled):", err);
     }
   }
 
-  if (subscription?.stripeCustomerId) {
+  if (subscription?.stripe_customer_id) {
     try {
-      await stripe.customers.del(subscription.stripeCustomerId);
+      await stripe.customers.del(subscription.stripe_customer_id);
     } catch (err) {
       console.error("[account/delete] customer delete failed (may already be deleted):", err);
     }
@@ -43,29 +44,34 @@ export async function DELETE() {
 
   if (userEmail) {
     try {
-      await prisma.trialClaim.upsert({
-        where: { email: userEmail },
-        create: { email: userEmail },
-        update: {},
-      });
+      await dbRun(
+        `INSERT INTO trial_claims (id, email) VALUES (?, ?)
+         ON CONFLICT(email) DO NOTHING`,
+        createId(), userEmail,
+      );
     } catch (err) {
       console.error("[account/delete] trial claim upsert failed:", err);
     }
   }
 
-  await prisma.user.delete({ where: { id: userId } });
+  // FK CASCADE on user_id deletes sessions/subscriptions/likes/views/etc.
+  // SQLite enforces FKs only when PRAGMA foreign_keys=ON per session, which
+  // D1 doesn't persist — so explicitly clean dependent rows first.
+  await dbRun(`DELETE FROM subscriptions WHERE user_id = ?`, userId);
+  await dbRun(`DELETE FROM sessions WHERE user_id = ?`, userId);
+  await dbRun(`DELETE FROM post_likes WHERE user_id = ?`, userId);
+  await dbRun(`DELETE FROM post_views WHERE user_id = ?`, userId);
+  await dbRun(`DELETE FROM ai_search_logs WHERE user_id = ?`, userId);
+  await dbRun(`DELETE FROM push_subscriptions WHERE user_id = ?`, userId);
+  await dbRun(`DELETE FROM users WHERE id = ?`, userId);
 
   return NextResponse.json({ ok: true, refundedCents });
 }
 
-// Prorated refund for the unused portion of the current billing period.
-// Returns cents refunded, or 0 if no refund applied.
 async function issueProratedRefund(
   stripe: Stripe,
   sub: Stripe.Subscription
 ): Promise<number> {
-  // Both "active" and "past_due" users have paid for a period that may still
-  // be unused. Skip trialing (no charge) and canceled/incomplete (already over).
   if (sub.status !== "active" && sub.status !== "past_due") return 0;
 
   const item = sub.items?.data?.[0] as

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { dbAll, dbFirst, dbRun, createId, type PostRow, type SubscriptionRow, fromBit, toDate, nowISO } from "@/lib/db";
 import { rateLimit } from "@/lib/rate-limit";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -14,12 +14,19 @@ export async function POST(req: NextRequest) {
 
   // AI search is a Deep Roots exclusive — check DB directly (not stale JWT)
   // Admin users also get access.
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true, subscription: { select: { plan: true, status: true } } },
-  });
+  const user = await dbFirst<{
+    role: string;
+    sub_plan: SubscriptionRow["plan"] | null;
+    sub_status: SubscriptionRow["status"] | null;
+  }>(
+    `SELECT u.role, s.plan AS sub_plan, s.status AS sub_status
+     FROM users u
+     LEFT JOIN subscriptions s ON s.user_id = u.id
+     WHERE u.id = ?`,
+    session.user.id,
+  );
   const isAdmin = user?.role === "ADMIN";
-  const isDeepRoots = user?.subscription?.plan === "DEEP_ROOTS" && user?.subscription?.status === "ACTIVE";
+  const isDeepRoots = user?.sub_plan === "DEEP_ROOTS" && user?.sub_status === "ACTIVE";
   if (!isAdmin && !isDeepRoots) {
     return NextResponse.json({ error: "Deep Roots membership required" }, { status: 403 });
   }
@@ -46,11 +53,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ posts: [] });
   }
 
-  const posts = await prisma.post.findMany({
-    where: { status: "PUBLISHED" },
-    select: { id: true, slug: true, title: true, description: true, niche: true, isPremium: true, isDeepRoots: true, publishedAt: true, featuredImage: true },
-    orderBy: { publishedAt: "desc" },
-  });
+  const rows = await dbAll<Pick<PostRow, "id" | "slug" | "title" | "description" | "niche" | "is_premium" | "is_deep_roots" | "published_at" | "featured_image">>(
+    `SELECT id, slug, title, description, niche, is_premium, is_deep_roots, published_at, featured_image
+     FROM posts WHERE status = ? ORDER BY published_at DESC`,
+    "PUBLISHED",
+  );
+  const posts = rows.map(r => ({
+    id: r.id, slug: r.slug, title: r.title, description: r.description, niche: r.niche,
+    isPremium: fromBit(r.is_premium), isDeepRoots: fromBit(r.is_deep_roots),
+    publishedAt: toDate(r.published_at), featuredImage: r.featured_image,
+  }));
 
   if (posts.length === 0) return NextResponse.json({ posts: [] });
 
@@ -77,13 +89,10 @@ export async function POST(req: NextRequest) {
   });
 
   // Log token usage for cost tracking (fire-and-forget)
-  prisma.aiSearchLog.create({
-    data: {
-      userId: session.user.id,
-      inputTokens: message.usage.input_tokens,
-      outputTokens: message.usage.output_tokens,
-    },
-  }).catch(() => {});
+  dbRun(
+    `INSERT INTO ai_search_logs (id, user_id, input_tokens, output_tokens, created_at) VALUES (?, ?, ?, ?, ?)`,
+    createId(), session.user.id, message.usage.input_tokens, message.usage.output_tokens, nowISO(),
+  ).catch(() => {});
 
   // Response starts after our "[" prefill, so prepend it back
   const raw = "[" + (message.content[0].type === "text" ? message.content[0].text.trim() : "");

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe, planFromPriceId } from "@/lib/stripe";
-import { prisma } from "@/lib/prisma";
+import { dbFirst, dbRun, createId, nowISO } from "@/lib/db";
 import type Stripe from "stripe";
 
 export async function POST(req: NextRequest) {
@@ -22,20 +22,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
-  // Idempotency: if we've already processed this event, acknowledge and stop.
-  // Stripe retries on 5xx and occasionally sends duplicates even on 2xx,
-  // so double-processing has to be impossible, not just unlikely.
+  // Idempotency check via PRIMARY KEY conflict
+  const seen = await dbFirst<{ stripe_event_id: string }>(
+    `SELECT stripe_event_id FROM webhook_events WHERE stripe_event_id = ?`,
+    event.id,
+  );
+  if (seen) {
+    return NextResponse.json({ received: true, duplicate: true });
+  }
   try {
-    await prisma.webhookEvent.create({
-      data: { stripeEventId: event.id, eventType: event.type },
-    });
+    await dbRun(
+      `INSERT INTO webhook_events (stripe_event_id, event_type) VALUES (?, ?)`,
+      event.id, event.type,
+    );
   } catch (err) {
-    // Unique constraint violation = already seen. Return 200 so Stripe stops retrying.
-    if (err && typeof err === "object" && "code" in err && err.code === "P2002") {
-      return NextResponse.json({ received: true, duplicate: true });
-    }
-    // Any other error — log but continue, so a transient DB blip doesn't lose the event
-    console.error("[webhooks/stripe] idempotency insert failed:", err);
+    // SQLITE_CONSTRAINT — race with another concurrent invocation, treat as duplicate
+    console.warn("[webhooks/stripe] idempotency race:", err);
+    return NextResponse.json({ received: true, duplicate: true });
   }
 
   switch (event.type) {
@@ -49,76 +52,68 @@ export async function POST(req: NextRequest) {
       const subscriptionId = typeof session.subscription === "string"
         ? session.subscription
         : session.subscription?.id;
-
       if (!subscriptionId) break;
 
-      // Fallback: if userId missing from metadata, look up by customer email
       if (!userId) {
         const customer = await stripe.customers.retrieve(customerId);
         const email = "deleted" in customer ? null : customer.email;
         if (email) {
-          const user = await prisma.user.findUnique({ where: { email } });
-          userId = user?.id;
+          const u = await dbFirst<{ id: string }>(`SELECT id FROM users WHERE email = ?`, email);
+          userId = u?.id;
         }
       }
-
       if (!userId) break;
 
-      // Get period end and trial end from the subscription
       const stripeSub = await stripe.subscriptions.retrieve(subscriptionId);
-      const periodEnd = periodEndFromSub(stripeSub);
-      const trialEnd = stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000) : null;
+      const periodEndISO = periodEndISOFromSub(stripeSub);
+      const trialEndISO = stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString().replace("T", " ").slice(0, 19) : null;
 
-      await prisma.subscription.upsert({
-        where: { userId },
-        create: {
-          userId,
-          stripeCustomerId: customerId,
-          stripeSubscriptionId: subscriptionId,
-          status: "ACTIVE",
-          plan: plan ?? "SEEDLING",
-          currentPeriodEnd: periodEnd,
-          trialEnd,
-        },
-        update: {
-          stripeCustomerId: customerId,
-          stripeSubscriptionId: subscriptionId,
-          status: "ACTIVE",
-          plan: plan ?? "SEEDLING",
-          currentPeriodEnd: periodEnd,
-          trialEnd,
-        },
-      });
+      await dbRun(
+        `INSERT INTO subscriptions
+           (id, user_id, stripe_customer_id, stripe_subscription_id, status, plan, current_period_end, trial_end, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           stripe_customer_id = excluded.stripe_customer_id,
+           stripe_subscription_id = excluded.stripe_subscription_id,
+           status = 'ACTIVE',
+           plan = excluded.plan,
+           current_period_end = excluded.current_period_end,
+           trial_end = excluded.trial_end,
+           updated_at = excluded.updated_at`,
+        createId(), userId, customerId, subscriptionId, plan ?? "SEEDLING",
+        periodEndISO, trialEndISO, nowISO(), nowISO(),
+      );
       break;
     }
 
     case "customer.subscription.updated": {
       const sub = event.data.object as Stripe.Subscription;
-      // Derive plan from price ID — metadata.plan is NOT updated by Stripe portal changes
       const priceId = sub.items.data[0]?.price.id ?? "";
       const plan = planFromPriceId(priceId) ?? (sub.metadata?.plan as "SEEDLING" | "DEEP_ROOTS" | undefined);
       const status = stripeStatusToDb(sub.status);
-      const periodEnd = periodEndFromSub(sub);
-      const trialEnd = sub.trial_end ? new Date(sub.trial_end * 1000) : null;
+      const periodEndISO = periodEndISOFromSub(sub);
+      const trialEndISO = sub.trial_end ? new Date(sub.trial_end * 1000).toISOString().replace("T", " ").slice(0, 19) : null;
 
-      await prisma.subscription.updateMany({
-        where: { stripeSubscriptionId: sub.id },
-        data: {
-          status,
-          currentPeriodEnd: periodEnd,
-          trialEnd,
-          ...(plan ? { plan } : {}),
-        },
-      });
+      if (plan) {
+        await dbRun(
+          `UPDATE subscriptions SET status = ?, current_period_end = ?, trial_end = ?, plan = ? WHERE stripe_subscription_id = ?`,
+          status, periodEndISO, trialEndISO, plan, sub.id,
+        );
+      } else {
+        await dbRun(
+          `UPDATE subscriptions SET status = ?, current_period_end = ?, trial_end = ? WHERE stripe_subscription_id = ?`,
+          status, periodEndISO, trialEndISO, sub.id,
+        );
+      }
       break;
     }
 
     case "customer.subscription.deleted": {
       const sub = event.data.object as Stripe.Subscription;
-      await prisma.subscription.updateMany({
-        where: { stripeSubscriptionId: sub.id },
-        data: { status: "CANCELED", plan: null, currentPeriodEnd: null },
-      });
+      await dbRun(
+        `UPDATE subscriptions SET status = 'CANCELED', plan = NULL, current_period_end = NULL WHERE stripe_subscription_id = ?`,
+        sub.id,
+      );
       break;
     }
 
@@ -126,10 +121,10 @@ export async function POST(req: NextRequest) {
       const invoice = event.data.object as Stripe.Invoice;
       const subscriptionId = getInvoiceSubscriptionId(invoice);
       if (subscriptionId) {
-        await prisma.subscription.updateMany({
-          where: { stripeSubscriptionId: subscriptionId },
-          data: { status: "PAST_DUE" },
-        });
+        await dbRun(
+          `UPDATE subscriptions SET status = 'PAST_DUE' WHERE stripe_subscription_id = ?`,
+          subscriptionId,
+        );
       }
       break;
     }
@@ -139,13 +134,10 @@ export async function POST(req: NextRequest) {
       const subscriptionId = getInvoiceSubscriptionId(invoice);
       if (subscriptionId) {
         const stripeSub = await stripe.subscriptions.retrieve(subscriptionId);
-        await prisma.subscription.updateMany({
-          where: { stripeSubscriptionId: subscriptionId },
-          data: {
-            status: "ACTIVE",
-            currentPeriodEnd: periodEndFromSub(stripeSub),
-          },
-        });
+        await dbRun(
+          `UPDATE subscriptions SET status = 'ACTIVE', current_period_end = ? WHERE stripe_subscription_id = ?`,
+          periodEndISOFromSub(stripeSub), subscriptionId,
+        );
       }
       break;
     }
@@ -154,12 +146,11 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ received: true });
 }
 
-// current_period_end moved to SubscriptionItem in newer Stripe API
-function periodEndFromSub(sub: Stripe.Subscription): Date | null {
+function periodEndISOFromSub(sub: Stripe.Subscription): string | null {
   const item = sub.items?.data?.[0];
   if (!item) return null;
   const ts = (item as Stripe.SubscriptionItem & { current_period_end?: number }).current_period_end;
-  return ts ? new Date(ts * 1000) : null;
+  return ts ? new Date(ts * 1000).toISOString().replace("T", " ").slice(0, 19) : null;
 }
 
 function getInvoiceSubscriptionId(invoice: Stripe.Invoice): string | null {

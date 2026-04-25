@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { dbFirst, dbRun, type UserRow } from "@/lib/db";
 import { rateLimit, getClientIp } from "@/lib/rate-limit";
 import bcrypt from "bcryptjs";
 
@@ -15,7 +15,6 @@ export async function POST(req: NextRequest) {
 
   const email = rawEmail.trim().toLowerCase();
 
-  // Rate limit submission per email and per IP to prevent token brute-forcing
   const emailLimit = await rateLimit({
     action: "reset-password",
     identifier: email,
@@ -41,7 +40,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Password rules — same as register
   const pwErrors = [];
   if (password.length < 8)             pwErrors.push("at least 8 characters");
   if (!/[A-Z]/.test(password))         pwErrors.push("one uppercase letter");
@@ -54,15 +52,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await dbFirst<UserRow>(`SELECT * FROM users WHERE email = ?`, email);
 
-  if (
-    !user ||
-    !user.resetToken ||
-    user.resetToken !== token ||
-    !user.resetTokenExp ||
-    user.resetTokenExp < new Date()
-  ) {
+  const tokenValid = (() => {
+    if (!user || !user.reset_token || user.reset_token !== token || !user.reset_token_exp) return false;
+    const expMs = Date.parse(user.reset_token_exp.replace(" ", "T") + "Z");
+    return expMs >= Date.now();
+  })();
+
+  if (!user || !tokenValid) {
     return NextResponse.json(
       { error: "This reset link has expired or is invalid. Request a new one." },
       { status: 400 }
@@ -71,16 +69,11 @@ export async function POST(req: NextRequest) {
 
   const passwordHash = await bcrypt.hash(password, 13);
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      passwordHash,
-      resetToken: null,
-      resetTokenExp: null,
-      // Mark email verified — they proved access by clicking the link in their inbox
-      emailVerified: true,
-    },
-  });
+  await dbRun(
+    `UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_exp = NULL, email_verified = 1
+     WHERE id = ?`,
+    passwordHash, user.id,
+  );
 
   return NextResponse.json({ ok: true });
 }

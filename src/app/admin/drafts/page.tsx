@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
+import { dbAll, type AgentDraftRow, fromBit } from "@/lib/db";
 
 const nicheLabel: Record<string, string> = {
   faith: "Faith",
@@ -17,9 +17,15 @@ const statusColors: Record<string, string> = {
 };
 
 export default async function DraftsPage() {
-  const drafts = await prisma.agentDraft.findMany({
-    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-  });
+  const rows = await dbAll<AgentDraftRow>(
+    `SELECT * FROM agent_drafts ORDER BY status ASC, created_at DESC`,
+  );
+  const drafts = rows.map(r => ({
+    ...r,
+    isPremium: fromBit(r.is_premium),
+    isDeepRoots: fromBit(r.is_deep_roots),
+    agentName: r.agent_name,
+  }));
 
   const pending = drafts.filter((d) => d.status === "PENDING");
   const reviewed = drafts.filter((d) => d.status !== "PENDING");

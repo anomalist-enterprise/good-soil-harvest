@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { dbFirst, dbRun, createId, nowISO } from "@/lib/db";
 import { sendVerificationEmail } from "@/lib/email";
 import { rateLimit, getClientIp } from "@/lib/rate-limit";
 import bcrypt from "bcryptjs";
@@ -19,12 +19,11 @@ export async function POST(req: NextRequest) {
 
   const email = rawEmail.trim().toLowerCase();
 
-  // Rate limit signups per IP (prevent spam registrations)
   const ipLimit = await rateLimit({
     action: "register",
     identifier: getClientIp(req),
     max: 5,
-    windowSeconds: 60 * 60, // 5 per hour
+    windowSeconds: 60 * 60,
   });
   if (!ipLimit.ok) {
     return NextResponse.json(
@@ -45,9 +44,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const existing = await prisma.user.findUnique({ where: { email } });
+  const existing = await dbFirst<{ id: string }>(`SELECT id FROM users WHERE email = ?`, email);
   if (existing) {
-    // Tell the client to redirect them to sign-in (or password reset) instead
     return NextResponse.json(
       { error: "account_exists", message: "An account with that email already exists. Sign in instead." },
       { status: 409 }
@@ -56,18 +54,13 @@ export async function POST(req: NextRequest) {
 
   const passwordHash = await bcrypt.hash(password, 13);
   const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const exp = new Date(Date.now() + 1000 * 60 * 30); // 30 minutes
+  const expISO = new Date(Date.now() + 1000 * 60 * 30).toISOString().replace("T", " ").slice(0, 19);
 
-  await prisma.user.create({
-    data: {
-      email,
-      passwordHash,
-      role: "SUBSCRIBER",
-      emailVerified: false,
-      verifyToken: code,
-      verifyTokenExp: exp,
-    },
-  });
+  await dbRun(
+    `INSERT INTO users (id, email, password_hash, role, email_verified, verify_token, verify_token_exp, created_at, updated_at)
+     VALUES (?, ?, ?, 'SUBSCRIBER', 0, ?, ?, ?, ?)`,
+    createId(), email, passwordHash, code, expISO, nowISO(), nowISO(),
+  );
 
   sendVerificationEmail(email, code).catch(console.error);
 

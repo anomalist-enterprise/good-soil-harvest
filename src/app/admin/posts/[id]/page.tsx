@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { dbFirst, type PostRow, fromBit, toDate } from "@/lib/db";
 import PostEditClient from "./PostEditClient";
 
 export default async function PostEditPage({
@@ -9,7 +9,7 @@ export default async function PostEditPage({
 }) {
   const { id } = await params;
 
-  const post = await prisma.post.findUnique({ where: { id } });
+  const post = await dbFirst<PostRow>(`SELECT * FROM posts WHERE id = ?`, id);
   if (!post) notFound();
 
   return (
@@ -21,10 +21,10 @@ export default async function PostEditPage({
         description: post.description,
         content: post.content,
         niche: post.niche,
-        isPremium: post.isPremium,
+        isPremium: fromBit(post.is_premium),
         status: post.status,
-        publishedAt: post.publishedAt?.toISOString() ?? null,
-        updatedAt: post.updatedAt.toISOString(),
+        publishedAt: toDate(post.published_at)?.toISOString() ?? null,
+        updatedAt: (toDate(post.updated_at) ?? new Date()).toISOString(),
       }}
     />
   );

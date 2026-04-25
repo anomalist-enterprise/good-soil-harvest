@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { dbFirst, dbRun, type PostRow, nowISO } from "@/lib/db";
 import { auth } from "@/auth";
 
 export async function PATCH(
@@ -14,10 +14,9 @@ export async function PATCH(
   const { id } = await params;
   const { title, description, content, niche, isPremium, status } = await req.json();
 
-  const post = await prisma.post.findUnique({ where: { id } });
+  const post = await dbFirst<PostRow>(`SELECT * FROM posts WHERE id = ?`, id);
   if (!post) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Regenerate slug only if title changed
   let slug = post.slug;
   if (title !== post.title) {
     const base = title
@@ -29,13 +28,13 @@ export async function PATCH(
     slug = `${base}-${Date.now()}`;
   }
 
-  const publishedAt =
-    status === "PUBLISHED" && !post.publishedAt ? new Date() : post.publishedAt;
+  const publishedAt = status === "PUBLISHED" && !post.published_at ? nowISO() : post.published_at;
 
-  await prisma.post.update({
-    where: { id },
-    data: { title, description, content, niche, isPremium, status, slug, publishedAt },
-  });
+  await dbRun(
+    `UPDATE posts SET title = ?, description = ?, content = ?, niche = ?, is_premium = ?, status = ?, slug = ?, published_at = ?
+     WHERE id = ?`,
+    title, description, content, niche, isPremium ? 1 : 0, status, slug, publishedAt, id,
+  );
 
   return NextResponse.json({ ok: true });
 }
@@ -50,6 +49,10 @@ export async function DELETE(
   }
 
   const { id } = await params;
-  await prisma.post.delete({ where: { id } });
+  // Manual cleanup of dependent rows since SQLite FK enforcement is per-session
+  await dbRun(`DELETE FROM post_likes WHERE post_id = ?`, id);
+  await dbRun(`DELETE FROM post_views WHERE post_id = ?`, id);
+  await dbRun(`DELETE FROM affiliate_links WHERE post_id = ?`, id);
+  await dbRun(`DELETE FROM posts WHERE id = ?`, id);
   return NextResponse.json({ ok: true });
 }
