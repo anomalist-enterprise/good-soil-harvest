@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbAll, dbFirst, type UserRow, type SubscriptionRow, type PostRow } from "@/lib/db";
+import { stripe } from "@/lib/stripe";
 
 // Machine-to-machine endpoint — uses AGENT_API_SECRET bearer token (same as /api/agent)
 export async function GET(req: NextRequest) {
@@ -74,6 +75,11 @@ export async function GET(req: NextRequest) {
   const imageCostPerUnit = 0.0028;
   const imageCostEst = parseFloat((imageCount * imageCostPerUnit).toFixed(4));
 
+  // Stripe billing summary — runs here so live keys never have to leave the
+  // Worker's secret store. MC pulls this via this endpoint and renders it on
+  // the Overview tab.
+  const billing = await buildBillingSummary(users);
+
   return NextResponse.json({
     users: usersOut,
     posts: Object.fromEntries(postCounts.map(r => [r.status, r.n])),
@@ -96,6 +102,69 @@ export async function GET(req: NextRequest) {
       costPerImage: imageCostPerUnit,
       estimatedCostUsd: imageCostEst,
     },
+    billing,
     generatedAt: new Date().toISOString(),
   });
+}
+
+type StatsUser = UserRow & {
+  sub_status: SubscriptionRow["status"] | null;
+  sub_plan: SubscriptionRow["plan"] | null;
+};
+
+async function buildBillingSummary(users: StatsUser[]) {
+  const key = process.env.STRIPE_SECRET_KEY ?? "";
+  const mode: "live" | "test" | "unknown" = key.startsWith("sk_live_")
+    ? "live"
+    : key.startsWith("sk_test_")
+    ? "test"
+    : "unknown";
+
+  const planMap: Record<string, string | undefined> = {
+    SEEDLING: process.env.STRIPE_PRICE_SEEDLING,
+    DEEP_ROOTS: process.env.STRIPE_PRICE_DEEP_ROOTS,
+  };
+  const planPrices: Record<string, { cents: number; currency: string; interval: string }> = {};
+  for (const [plan, priceId] of Object.entries(planMap)) {
+    if (!priceId) continue;
+    try {
+      const p = await stripe.prices.retrieve(priceId);
+      if (p.unit_amount != null) {
+        planPrices[plan] = {
+          cents: p.unit_amount,
+          currency: p.currency,
+          interval: p.recurring?.interval ?? "month",
+        };
+      }
+    } catch {
+      // Price retrieval failed (wrong env, retired price) — skip.
+    }
+  }
+
+  const activeByPlan: Record<string, number> = {};
+  for (const u of users) {
+    if (u.sub_status === "ACTIVE" && u.sub_plan) {
+      activeByPlan[u.sub_plan] = (activeByPlan[u.sub_plan] ?? 0) + 1;
+    }
+  }
+
+  let mrrCents = 0;
+  let currency = "usd";
+  for (const [plan, count] of Object.entries(activeByPlan)) {
+    const p = planPrices[plan];
+    if (!p) continue;
+    currency = p.currency;
+    const monthly = p.interval === "year" ? p.cents / 12 : p.cents;
+    mrrCents += Math.round(monthly * count);
+  }
+
+  return {
+    mode,
+    mrr_cents: mrrCents,
+    currency,
+    plan_prices: Object.fromEntries(
+      Object.entries(planPrices).map(([k, v]) => [k, { cents: v.cents, interval: v.interval }])
+    ),
+    active_subs_by_plan: activeByPlan,
+  };
 }
