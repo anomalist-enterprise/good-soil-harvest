@@ -1,0 +1,29 @@
+# Sentinel — caller workflow
+#
+# This file gets vendored into every Sentinel-watched repo at
+# `.github/workflows/sentinel.yml`. It calls the reusable workflow that lives
+# in anomalist-enterprise/sentinel/.github/workflows/sentinel-scan.yml.
+#
+# Required repo secret: SENTINEL_INGEST_SECRET (set automatically by the
+# Sentinel onboarder using a Chris-owned PAT with `repo` scope).
+
+name: Sentinel
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1'   # Monday 06:00 UTC weekly full scan
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  sentinel:
+    uses: anomalist-enterprise/sentinel/.github/workflows/sentinel-scan.yml@main
+    with:
+      trigger: ${{ github.event_name }}
+    secrets:
+      INGEST_SECRET: ${{ secrets.SENTINEL_INGEST_SECRET }}
