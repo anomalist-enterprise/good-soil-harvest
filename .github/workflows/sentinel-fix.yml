@@ -1,0 +1,43 @@
+# Sentinel — fix caller workflow
+#
+# Vendored into every Sentinel-watched repo at .github/workflows/sentinel-fix.yml.
+# Dispatched by the Sentinel Worker when a Lane 1 cron auto-fix or Lane 2 user
+# "Open fix PR" click happens.
+
+name: Sentinel — Apply fix
+
+on:
+  workflow_dispatch:
+    inputs:
+      finding_id:
+        description: "Sentinel finding id"
+        required: true
+      finding_type:
+        description: "Finding type (dep_vuln, sast, etc)"
+        required: true
+      finding_title:
+        description: "Finding title"
+        required: true
+      lane:
+        description: "lane1 | lane2"
+        required: true
+      package_name:
+        description: "Package name (for dep_vuln)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  fix:
+    uses: anomalist-enterprise/sentinel/.github/workflows/sentinel-apply-fix.yml@main
+    with:
+      finding_id: ${{ inputs.finding_id }}
+      finding_type: ${{ inputs.finding_type }}
+      finding_title: ${{ inputs.finding_title }}
+      lane: ${{ inputs.lane }}
+      package_name: ${{ inputs.package_name }}
+    secrets:
+      INGEST_SECRET: ${{ secrets.SENTINEL_INGEST_SECRET }}
