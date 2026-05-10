@@ -25,6 +25,14 @@ on:
         description: "Package name (for dep_vuln)"
         required: false
         default: ""
+      fix_strategy:
+        description: "audit-fix (default) | override"
+        required: false
+        default: "audit-fix"
+      override_version:
+        description: "Pinned version when fix_strategy=override"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -39,5 +47,7 @@ jobs:
       finding_title: ${{ inputs.finding_title }}
       lane: ${{ inputs.lane }}
       package_name: ${{ inputs.package_name }}
+      fix_strategy: ${{ inputs.fix_strategy }}
+      override_version: ${{ inputs.override_version }}
     secrets:
       INGEST_SECRET: ${{ secrets.SENTINEL_INGEST_SECRET }}
