@@ -45,6 +45,18 @@ const nextConfig: NextConfig = {
     ],
   },
 
+  // Next.js (App + Pages router) skips dot-prefixed folders during build —
+  // both `public/.well-known/` and `app/.well-known/` are silently ignored.
+  // To serve RFC 9116 security.txt at `/.well-known/security.txt` we keep
+  // the route at `app/well-known/security.txt/route.ts` and rewrite the
+  // public path here. Same trick for any future `.well-known/*` paths
+  // (apple-app-site-association, change-password, etc.).
+  async rewrites() {
+    return [
+      { source: "/.well-known/:path*", destination: "/well-known/:path*" },
+    ];
+  },
+
   async headers() {
     return [
       {
