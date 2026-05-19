@@ -1,0 +1,31 @@
+/**
+ * cron-digest — standalone Worker that fires the weekly GSH digest via cron.
+ *
+ * Replaces the launchd job `com.chris.goodsoil-weekly-digest` that lived on
+ * Chris's Mac. Same behavior: POST /api/notifications/digest with the agent
+ * bearer token. Schedule is Sundays 13:00 UTC (≈ 9 AM ET in summer, 8 AM ET
+ * in winter — matches "Sunday morning" intent of the original cron).
+ *
+ * The AGENT_API_SECRET secret must be set on this worker before it can run:
+ *   wrangler secret put AGENT_API_SECRET --env llc
+ *
+ * Deployed to the Anomalist Enterprise LLC CF account only (--env llc).
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "goodsoilharvest-cron-digest-placeholder",
+  "main": "index.ts",
+  "compatibility_date": "2026-04-25",
+  "env": {
+    "llc": {
+      "name": "goodsoilharvest-cron-digest",
+      "account_id": "8e97b023dbbaa50bf239be77137a01a3",
+      "triggers": {
+        "crons": ["0 13 * * SUN"]
+      },
+      "observability": {
+        "enabled": true
+      }
+    }
+  }
+}

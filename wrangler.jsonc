@@ -35,5 +35,31 @@
       "binding": "IMG_BUCKET",
       "bucket_name": "good-soil-harvest-images"
     }
-  ]
+  ],
+
+  // env.llc — staging target on the Anomalist Enterprise LLC account.
+  // Deploy with: bunx wrangler deploy --env llc
+  // Same worker name + bucket name + D1 binding name; only account_id and
+  // D1 database_id differ. Bucket names are account-scoped so reusing is fine.
+  // Built 2026-05-11 during AE LLC migration prep — see project_ae_cf_migration.md.
+  "env": {
+    "llc": {
+      "name": "goodsoilharvest",
+      "account_id": "8e97b023dbbaa50bf239be77137a01a3",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "good-soil-harvest",
+          "database_id": "565e4c7f-c983-4a5e-8133-4ce7f1c80222",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "IMG_BUCKET",
+          "bucket_name": "good-soil-harvest-images"
+        }
+      ]
+    }
+  }
 }
