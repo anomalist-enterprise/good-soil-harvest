@@ -4,6 +4,15 @@ Newest entries at top. See CLAUDE.md rule #3 for format (or the convention in `~
 
 ---
 
+## 2026-05-22 — sentinel — fix #1309: weekly cleanup cron route
+
+- Added `src/app/api/cron/cleanup/route.ts` mirroring the `notifications/digest` shape (POST, `AGENT_API_SECRET`-gated). Batched (≤1000/pass) deletes for expired sessions, stale `RateLimit` rows (>30d), and orphan `AffiliateLink`s. `PushSubscription` cleanup intentionally skipped — no `last_contacted` column yet (note in route header).
+- Schedule the endpoint weekly from launchd alongside the existing digest cron; no infra/wrangler/workflow files touched.
+- Lane: 2 (awaiting Chris — no test suite, new endpoint needs scheduling)
+- PR: see Sentinel fix queue
+
+---
+
 ## 2026-05-18 — chris-cc — bootstrap DEVLOG.md
 
 - Created this `DEVLOG.md`. CLAUDE.md already existed in this repo (last touched 2026-04-05); not modified.
