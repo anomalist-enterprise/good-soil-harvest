@@ -77,10 +77,12 @@ export async function POST(req: NextRequest) {
     );
     const grantTrial = !priorClaim;
 
+    // No payment_method_types — Stripe Checkout uses the dashboard's default
+    // payment method configuration, which surfaces Card + Apple Pay + Google Pay
+    // + Link + any other enabled methods supporting recurring billing.
     const checkoutSession = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: "subscription",
-      automatic_payment_methods: { enabled: true },
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${origin}/dashboard?upgraded=1`,
       cancel_url: `${origin}/pricing`,
