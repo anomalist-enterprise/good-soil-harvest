@@ -4,6 +4,15 @@ Newest entries at top. See CLAUDE.md rule #3 for format (or the convention in `~
 
 ---
 
+## 2026-05-22 — sentinel — fix #1308: add user_id indexes on PostLike & PostView
+
+- New Prisma migration `20260522000000_add_post_like_view_user_indexes` adds `PostLike_userId_idx` and `PostView_userId_idx` so cascade-deletes on account removal don't sequential-scan engagement tables.
+- Mirrored the indexes in `schema.prisma` via `@@index([userId])` on both models (matches existing `PushSubscription` pattern) so schema stays in sync.
+- Lane: 2 (awaiting Chris — no test suite in this repo to validate against)
+- PR: see below
+
+---
+
 ## 2026-05-18 — chris-cc — bootstrap DEVLOG.md
 
 - Created this `DEVLOG.md`. CLAUDE.md already existed in this repo (last touched 2026-04-05); not modified.
