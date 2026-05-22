@@ -4,6 +4,14 @@ Newest entries at top. See CLAUDE.md rule #3 for format (or the convention in `~
 
 ---
 
+## 2026-05-22 — sentinel — fix #1064: bump next 16.2.2 → 16.2.5 (CVE-2026-44582)
+
+- `package.json` + `package-lock.json`: `next` and `eslint-config-next` bumped 16.2.2 → 16.2.5 to patch GHSA-vfv6-92ff-j949 (RSC cache-busting collision → cache poisoning).
+- Lane: 2 (awaiting Chris — no test suite in repo to gate auto-merge).
+- PR: see Sentinel finding #1064.
+
+---
+
 ## 2026-05-18 — chris-cc — bootstrap DEVLOG.md
 
 - Created this `DEVLOG.md`. CLAUDE.md already existed in this repo (last touched 2026-04-05); not modified.
