@@ -138,6 +138,10 @@ export default async function PostPage({
     }
   }
 
+  // Trial eligibility for the paywall copy below. Only relevant if accessGranted=false.
+  const { isTrialEligible } = await import("@/lib/trial");
+  const trialEligible = accessGranted ? true : await isTrialEligible(session?.user?.email);
+
   // Track view + check like status for authenticated users
   if (userId && accessGranted) {
     const [like] = await Promise.all([
@@ -309,7 +313,7 @@ export default async function PostPage({
           )}
         </>
       ) : (
-        <Paywall isDeepRoots={post.isDeepRoots} viewerPlan={viewerPlan} />
+        <Paywall isDeepRoots={post.isDeepRoots} viewerPlan={viewerPlan} trialEligible={trialEligible} />
       )}
 
       {/* Related posts */}
@@ -349,7 +353,7 @@ export default async function PostPage({
 
 type ViewerPlan = "FREE" | "SEEDLING" | "DEEP_ROOTS" | "ADMIN";
 
-function Paywall({ isDeepRoots, viewerPlan }: { isDeepRoots: boolean; viewerPlan: ViewerPlan }) {
+function Paywall({ isDeepRoots, viewerPlan, trialEligible }: { isDeepRoots: boolean; viewerPlan: ViewerPlan; trialEligible: boolean }) {
   const isLoggedIn = viewerPlan !== "FREE" || false; // FREE viewerPlan can mean signed-out OR signed-in-no-sub
   // ^ We can't distinguish from this prop alone. The render below handles each case explicitly.
   const isSeedlingViewingDeepRoots = viewerPlan === "SEEDLING" && isDeepRoots;
@@ -376,11 +380,18 @@ function Paywall({ isDeepRoots, viewerPlan }: { isDeepRoots: boolean; viewerPlan
   } else {
     // Signed out OR signed in with no active subscription (FREE)
     title = isDeepRoots ? "🌾 Deep Roots Exclusive" : "🌱 Premium Content";
-    body = isDeepRoots
-      ? "This article is for Deep Roots members. Start a 7-day free trial — exclusive posts, AI search, and full access to everything."
-      : "This article is for Seedling and Deep Roots members. Start a 7-day free trial to unlock all premium articles across every category.";
+    if (trialEligible) {
+      body = isDeepRoots
+        ? "This article is for Deep Roots members. Start a 7-day free trial — exclusive posts, AI search, and full access to everything."
+        : "This article is for Seedling and Deep Roots members. Start a 7-day free trial to unlock all premium articles across every category.";
+      primaryLabel = "Start free trial →";
+    } else {
+      body = isDeepRoots
+        ? "This article is for Deep Roots members — exclusive posts, AI search, and full access to everything."
+        : "This article is for Seedling and Deep Roots members. Unlock all premium articles across every category.";
+      primaryLabel = isDeepRoots ? "Subscribe — $9.99/mo →" : "Subscribe — $4.99/mo →";
+    }
     primaryHref = isDeepRoots ? "/pricing#deep-roots" : "/pricing#seedling";
-    primaryLabel = "Start free trial →";
     showSignIn = true;
   }
 
