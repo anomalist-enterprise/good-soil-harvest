@@ -4,6 +4,14 @@ Newest entries at top. See CLAUDE.md rule #3 for format (or the convention in `~
 
 ---
 
+## 2026-05-22 — sentinel — fix #1065: bump next 16.2.2 → 16.2.5 (CVE-2026-44576)
+
+- Patch-level bump of `next` to address GHSA-wfc6-r584-vfw7 (RSC cache poisoning, medium). Touches `package.json` + `package-lock.json` only.
+- Lane: 2 (awaiting Chris) — repo has no test suite, so even though it's a patch bump, can't auto-merge.
+- PR: see Sentinel finding #1065.
+
+---
+
 ## 2026-05-18 — chris-cc — bootstrap DEVLOG.md
 
 - Created this `DEVLOG.md`. CLAUDE.md already existed in this repo (last touched 2026-04-05); not modified.
