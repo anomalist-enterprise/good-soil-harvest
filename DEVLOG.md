@@ -4,6 +4,14 @@ Newest entries at top. See CLAUDE.md rule #3 for format (or the convention in `~
 
 ---
 
+## 2026-05-22 — sentinel — fix #1305: wrap account-delete cascade in try/catch
+
+- Wrapped the final `prisma.user.delete` in try/catch in `src/app/api/account/delete/route.ts`. On failure: log table name + return 500 generic message so the caller can retry (avoids 200-with-half-deleted-user). Stripe + trialClaim ops were already individually wrapped — left untouched.
+- Lane: 2 (awaiting Chris — sensitive endpoint, no test suite in repo)
+- PR: see Sentinel finding #1305
+
+---
+
 ## 2026-05-18 — chris-cc — bootstrap DEVLOG.md
 
 - Created this `DEVLOG.md`. CLAUDE.md already existed in this repo (last touched 2026-04-05); not modified.

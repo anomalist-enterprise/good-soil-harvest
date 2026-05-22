@@ -53,7 +53,15 @@ export async function DELETE() {
     }
   }
 
-  await prisma.user.delete({ where: { id: userId } });
+  try {
+    await prisma.user.delete({ where: { id: userId } });
+  } catch (err) {
+    console.error("[account/delete] user delete failed (table=user):", err);
+    return NextResponse.json(
+      { error: "Account deletion failed. Please try again." },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({ ok: true, refundedCents });
 }
