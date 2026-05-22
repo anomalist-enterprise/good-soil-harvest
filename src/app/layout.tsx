@@ -68,7 +68,7 @@ export default function RootLayout({
         )}
       </head>
       <body className="min-h-screen flex flex-col">
-        {process.env.STRIPE_SECRET_KEY?.startsWith("sk_test_") && <StripeSandboxBanner />}
+        {/^(sk|rk)_test_/.test(process.env.STRIPE_SECRET_KEY ?? "") && <StripeSandboxBanner />}
         <Providers>
           {children}
           <BottomNav />
