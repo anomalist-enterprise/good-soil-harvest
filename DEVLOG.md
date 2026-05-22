@@ -4,6 +4,14 @@ Newest entries at top. See CLAUDE.md rule #3 for format (or the convention in `~
 
 ---
 
+## 2026-05-22 — sentinel — fix #1307: collapse digest N+1 into single user lookup
+
+- `src/app/api/notifications/digest/route.ts`: replaced per-user `prisma.user.findUnique` loop with one `findMany({ where: { id: { in: userIds } } })` + Map lookup. Behavior unchanged; round-trips drop from N+1 → 2.
+- Lane: 2 (awaiting Chris — no test suite in repo to gate on).
+- PR: see Sentinel finding #1307.
+
+---
+
 ## 2026-05-18 — chris-cc — bootstrap DEVLOG.md
 
 - Created this `DEVLOG.md`. CLAUDE.md already existed in this repo (last touched 2026-04-05); not modified.

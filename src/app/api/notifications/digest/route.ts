@@ -40,21 +40,29 @@ export async function POST(req: NextRequest) {
     select: { title: true, slug: true, niche: true, description: true },
   });
 
+  // Fetch all user emails in a single query to avoid N+1 round-trips.
+  const userIds = Array.from(userNiches.keys());
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, email: true },
+  });
+  const emailById = new Map(users.map(u => [u.id, u.email]));
+
   let sent = 0;
   let skipped = 0;
 
   for (const [userId, nichesSet] of userNiches) {
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
-    if (!user?.email) { skipped++; continue; }
+    const email = emailById.get(userId);
+    if (!email) { skipped++; continue; }
 
     const matching = recentPosts.filter(p => nichesSet.has(p.niche));
     if (matching.length === 0) { skipped++; continue; }
 
     try {
-      await sendWeeklyDigest(user.email, matching);
+      await sendWeeklyDigest(email, matching);
       sent++;
     } catch (err) {
-      console.error(`[digest] failed for ${user.email}:`, err);
+      console.error(`[digest] failed for ${email}:`, err);
     }
   }
 
