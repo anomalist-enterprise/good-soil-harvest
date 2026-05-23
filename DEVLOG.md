@@ -4,6 +4,14 @@ Newest entries at top. See CLAUDE.md rule #3 for format (or the convention in `~
 
 ---
 
+## 2026-05-23 — sentinel — fix #1308: add user_id indexes on post_likes + post_views
+
+- New migration `migrations/0003_post_engagement_user_indexes.sql` adds `idx_post_likes_user` and `idx_post_views_user`. Account deletion (and any per-user engagement query) no longer does full-table scans.
+- Lane: 2 (awaiting Chris — schema change, no test suite to gate it)
+- PR: pending push
+
+---
+
 ## 2026-05-19 — chris-cc — weekly digest moved to CF cron + GH/CF drift documented
 
 - New standalone Worker `goodsoilharvest-cron-digest` deployed on the AE LLC CF account (account `8e97b023...`). Source lives in `./cron-digest/` (wrangler.jsonc + index.ts, ~15 lines total). Cron `0 13 * * SUN` — Sundays 13:00 UTC (≈9 AM EDT / 8 AM EST). Calls apex `https://goodsoilharvest.com/api/notifications/digest` with `Authorization: Bearer $AGENT_API_SECRET`. Observability enabled. Deploy with `cd cron-digest && wrangler deploy --env llc`.
