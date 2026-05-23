@@ -4,6 +4,15 @@ Newest entries at top. See CLAUDE.md rule #3 for format (or the convention in `~
 
 ---
 
+## 2026-05-23 — sentinel — fix #1065: bump next to 16.2.5 (CVE-2026-44576)
+
+- Bumped `next` 16.2.4 → 16.2.5 (lowest patched version on the 16.x line per GHSA-wfc6-r584-vfw7). Patches an RSC-response cache-poisoning issue where shared caches could be tricked into serving RSC payloads from the canonical URL. Affected range on 16.x was `>=16.0.0, <16.2.5`.
+- Touched only `package.json` and `package-lock.json`. No source files changed.
+- Lane: 2 (awaiting Chris — no `test` script in package.json, so CI gate can't auto-verify)
+- PR: see latest open PR from `sentinel/fix/1065`
+
+---
+
 ## 2026-05-19 — chris-cc — weekly digest moved to CF cron + GH/CF drift documented
 
 - New standalone Worker `goodsoilharvest-cron-digest` deployed on the AE LLC CF account (account `8e97b023...`). Source lives in `./cron-digest/` (wrangler.jsonc + index.ts, ~15 lines total). Cron `0 13 * * SUN` — Sundays 13:00 UTC (≈9 AM EDT / 8 AM EST). Calls apex `https://goodsoilharvest.com/api/notifications/digest` with `Authorization: Bearer $AGENT_API_SECRET`. Observability enabled. Deploy with `cd cron-digest && wrangler deploy --env llc`.
