@@ -4,6 +4,15 @@ Newest entries at top. See CLAUDE.md rule #3 for format (or the convention in `~
 
 ---
 
+## 2026-05-23 — sentinel — fix #1064: bump next 16.2.4 → 16.2.6 (CVE-2026-44582)
+
+- `package.json` + `package-lock.json`: bumps `next` devDep from `^16.2.4` to `^16.2.6`. Closes GHSA-vfv6-92ff-j949 (low-severity RSC cache-poisoning via weak `_rsc` cache-buster collisions). First patched in 16.2.5; picked 16.2.6 since it's the current 16.2.x tip and the bump is patch-level.
+- Lane: 2 (awaiting Chris) — patch bump, but no `test` script in this repo so we can't auto-validate.
+- PR: see linked PR in commit body.
+- (future devs: thank Sentinel.)
+
+---
+
 ## 2026-05-23 — sentinel — fix #1305: wrap account/delete cascade DELETEs in try/catch
 
 - `src/app/api/account/delete/route.ts`: the 6 cascade DELETEs (subscriptions/sessions/post_likes/post_views/ai_search_logs/push_subscriptions/users) were unguarded — a D1 failure mid-cascade would leave a half-deleted user while the endpoint returned 200. Now iterates a table list with per-table try/catch that logs which table failed and returns 500 so the caller can retry. Stripe + trial_claims paths above were already in their own try/catch and were not touched.
