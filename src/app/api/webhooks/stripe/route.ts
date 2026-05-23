@@ -46,7 +46,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  switch (event.type) {
+  try {
+    switch (event.type) {
     case "checkout.session.completed": {
       const session = event.data.object as Stripe.Checkout.Session;
       if (session.mode !== "subscription") break;
@@ -174,6 +175,17 @@ export async function POST(req: NextRequest) {
       }
       break;
     }
+    }
+  } catch (err) {
+    // Handler crashed after the idempotency row was inserted (or after a
+    // duplicate-row fall-through). Do NOT set completed_at — Stripe will
+    // retry the event and the re-run will find completed_at = NULL and
+    // re-execute the handler (every db op below the INSERT is idempotent).
+    console.error(
+      `[webhooks/stripe] HANDLER CRASH event=${event.id} type=${event.type}:`,
+      err,
+    );
+    return NextResponse.json({ error: "Handler failed" }, { status: 500 });
   }
 
   await dbRun(

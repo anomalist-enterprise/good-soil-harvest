@@ -4,6 +4,15 @@ Newest entries at top. See CLAUDE.md rule #3 for format (or the convention in `~
 
 ---
 
+## 2026-05-23 — sentinel — fix #1304: wrap Stripe webhook switch in outer try/catch
+
+- `src/app/api/webhooks/stripe/route.ts`: the per-event switch had no outer try/catch, so any throw after the idempotency INSERT (and before the `UPDATE … completed_at = ?`) left a half-written `webhook_events` row plus a silent 200 to Stripe. Now wraps the whole switch in try/catch: on error, `console.error` a loud line with `event.id` + `event.type` and return 500 *without* setting `completed_at` — so Stripe retries and the next run re-executes (each handler op is already idempotent). Success path unchanged.
+- Lane: 2 (awaiting Chris) — no test suite, touches Stripe webhook path.
+- PR: see linked PR in commit body.
+- (future devs: thank Sentinel.)
+
+---
+
 ## 2026-05-23 — sentinel — fix #1305: wrap account/delete cascade DELETEs in try/catch
 
 - `src/app/api/account/delete/route.ts`: the 6 cascade DELETEs (subscriptions/sessions/post_likes/post_views/ai_search_logs/push_subscriptions/users) were unguarded — a D1 failure mid-cascade would leave a half-deleted user while the endpoint returned 200. Now iterates a table list with per-table try/catch that logs which table failed and returns 500 so the caller can retry. Stripe + trial_claims paths above were already in their own try/catch and were not touched.
