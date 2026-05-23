@@ -57,13 +57,28 @@ export async function DELETE() {
   // FK CASCADE on user_id deletes sessions/subscriptions/likes/views/etc.
   // SQLite enforces FKs only when PRAGMA foreign_keys=ON per session, which
   // D1 doesn't persist — so explicitly clean dependent rows first.
-  await dbRun(`DELETE FROM subscriptions WHERE user_id = ?`, userId);
-  await dbRun(`DELETE FROM sessions WHERE user_id = ?`, userId);
-  await dbRun(`DELETE FROM post_likes WHERE user_id = ?`, userId);
-  await dbRun(`DELETE FROM post_views WHERE user_id = ?`, userId);
-  await dbRun(`DELETE FROM ai_search_logs WHERE user_id = ?`, userId);
-  await dbRun(`DELETE FROM push_subscriptions WHERE user_id = ?`, userId);
-  await dbRun(`DELETE FROM users WHERE id = ?`, userId);
+  const cascadeTables = [
+    "subscriptions",
+    "sessions",
+    "post_likes",
+    "post_views",
+    "ai_search_logs",
+    "push_subscriptions",
+    "users",
+  ] as const;
+
+  for (const table of cascadeTables) {
+    const column = table === "users" ? "id" : "user_id";
+    try {
+      await dbRun(`DELETE FROM ${table} WHERE ${column} = ?`, userId);
+    } catch (err) {
+      console.error(`[account/delete] cascade DELETE failed on ${table}:`, err);
+      return NextResponse.json(
+        { error: "Account deletion failed. Please try again." },
+        { status: 500 },
+      );
+    }
+  }
 
   return NextResponse.json({ ok: true, refundedCents });
 }
