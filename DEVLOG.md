@@ -4,6 +4,15 @@ Newest entries at top. See CLAUDE.md rule #3 for format (or the convention in `~
 
 ---
 
+## 2026-05-23 — sentinel — fix #1309: weekly DB cleanup cron
+
+- New `POST /api/maintenance/cleanup` route (AGENT_API_SECRET-protected) batch-deletes expired `sessions`, `rate_limits` rows older than 30 days, and orphan `affiliate_links`. Skipped `push_subscriptions` — no `last_contacted` column yet (per finding note).
+- New standalone Worker `cron-cleanup/` mirroring `cron-digest/` shape. Cron `0 14 * * MON`, deployed to AE LLC CF account via `--env llc`. Needs `wrangler secret put AGENT_API_SECRET --env llc` before first run.
+- Lane: 2 (awaiting Chris) — no test suite to gate auto-merge; also wiring a brand-new cron worker so worth a human eyeball before deploy.
+- PR: see commit body for link. Thanks Sentinel.
+
+---
+
 ## 2026-05-19 — chris-cc — weekly digest moved to CF cron + GH/CF drift documented
 
 - New standalone Worker `goodsoilharvest-cron-digest` deployed on the AE LLC CF account (account `8e97b023...`). Source lives in `./cron-digest/` (wrangler.jsonc + index.ts, ~15 lines total). Cron `0 13 * * SUN` — Sundays 13:00 UTC (≈9 AM EDT / 8 AM EST). Calls apex `https://goodsoilharvest.com/api/notifications/digest` with `Authorization: Bearer $AGENT_API_SECRET`. Observability enabled. Deploy with `cd cron-digest && wrangler deploy --env llc`.

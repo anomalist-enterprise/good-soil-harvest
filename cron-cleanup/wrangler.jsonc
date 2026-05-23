@@ -1,0 +1,37 @@
+/**
+ * cron-cleanup — standalone Worker that fires a weekly DB cleanup against GSH.
+ *
+ * Mirrors the shape of cron-digest/: a tiny scheduled() handler that POSTs to
+ * a protected apex endpoint with the agent bearer token. The endpoint
+ * (/api/maintenance/cleanup) prunes expired sessions, old rate_limits rows,
+ * and orphan affiliate_links so those tables don't grow unbounded.
+ *
+ * Cron: Mondays 14:00 UTC — kept off Sunday so it doesn't race the weekly
+ * digest job (which runs Sundays 13:00 UTC).
+ *
+ * Set the shared secret before first deploy:
+ *   wrangler secret put AGENT_API_SECRET --env llc
+ *
+ * Deployed to the Anomalist Enterprise LLC CF account only (--env llc):
+ *   cd cron-cleanup && wrangler deploy --env llc
+ *
+ * Sentinel finding #1309.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "goodsoilharvest-cron-cleanup-placeholder",
+  "main": "index.ts",
+  "compatibility_date": "2026-04-25",
+  "env": {
+    "llc": {
+      "name": "goodsoilharvest-cron-cleanup",
+      "account_id": "8e97b023dbbaa50bf239be77137a01a3",
+      "triggers": {
+        "crons": ["0 14 * * MON"]
+      },
+      "observability": {
+        "enabled": true
+      }
+    }
+  }
+}
