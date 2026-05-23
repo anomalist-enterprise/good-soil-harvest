@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dbAll, dbFirst } from "@/lib/db";
+import { dbAll } from "@/lib/db";
 import { sendWeeklyDigest } from "@/lib/email";
 
 // Weekly digest endpoint — called by launchd cron every Sunday at 9 AM.
@@ -38,21 +38,29 @@ export async function POST(req: NextRequest) {
     oneWeekAgoISO,
   );
 
+  // Batch-fetch all subscriber emails in one round-trip (avoids N+1).
+  const userIds = Array.from(userNiches.keys());
+  const userRows = await dbAll<{ id: string; email: string }>(
+    `SELECT id, email FROM users WHERE id IN (${userIds.map(() => "?").join(",")})`,
+    ...userIds,
+  );
+  const emailById = new Map(userRows.map(u => [u.id, u.email]));
+
   let sent = 0;
   let skipped = 0;
 
   for (const [userId, nichesSet] of userNiches) {
-    const user = await dbFirst<{ email: string }>(`SELECT email FROM users WHERE id = ?`, userId);
-    if (!user?.email) { skipped++; continue; }
+    const email = emailById.get(userId);
+    if (!email) { skipped++; continue; }
 
     const matching = recentPosts.filter(p => nichesSet.has(p.niche));
     if (matching.length === 0) { skipped++; continue; }
 
     try {
-      await sendWeeklyDigest(user.email, matching);
+      await sendWeeklyDigest(email, matching);
       sent++;
     } catch (err) {
-      console.error(`[digest] failed for ${user.email}:`, err);
+      console.error(`[digest] failed for ${email}:`, err);
     }
   }
 

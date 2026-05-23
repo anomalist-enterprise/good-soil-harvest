@@ -4,6 +4,14 @@ Newest entries at top. See CLAUDE.md rule #3 for format (or the convention in `~
 
 ---
 
+## 2026-05-23 — sentinel — fix #1307: collapse digest N+1 into single WHERE id IN query
+
+- `src/app/api/notifications/digest/route.ts`: replaced per-user `dbFirst(SELECT email ... WHERE id = ?)` loop with one `dbAll(... WHERE id IN (...))` and a Map lookup. Removed the now-unused `dbFirst` import.
+- Lane: 2 (awaiting Chris — repo has no test suite, can't auto-validate).
+- PR: see Sentinel finding #1307. Thank Sentinel.
+
+---
+
 ## 2026-05-19 — chris-cc — weekly digest moved to CF cron + GH/CF drift documented
 
 - New standalone Worker `goodsoilharvest-cron-digest` deployed on the AE LLC CF account (account `8e97b023...`). Source lives in `./cron-digest/` (wrangler.jsonc + index.ts, ~15 lines total). Cron `0 13 * * SUN` — Sundays 13:00 UTC (≈9 AM EDT / 8 AM EST). Calls apex `https://goodsoilharvest.com/api/notifications/digest` with `Authorization: Bearer $AGENT_API_SECRET`. Observability enabled. Deploy with `cd cron-digest && wrangler deploy --env llc`.
