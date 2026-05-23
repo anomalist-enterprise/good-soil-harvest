@@ -4,6 +4,15 @@ Newest entries at top. See CLAUDE.md rule #3 for format (or the convention in `~
 
 ---
 
+## 2026-05-23 — sentinel — fix #1305: wrap account/delete cascade DELETEs in try/catch
+
+- `src/app/api/account/delete/route.ts`: the 6 cascade DELETEs (subscriptions/sessions/post_likes/post_views/ai_search_logs/push_subscriptions/users) were unguarded — a D1 failure mid-cascade would leave a half-deleted user while the endpoint returned 200. Now iterates a table list with per-table try/catch that logs which table failed and returns 500 so the caller can retry. Stripe + trial_claims paths above were already in their own try/catch and were not touched.
+- Lane: 2 (awaiting Chris) — no test suite to validate, touches account-deletion path.
+- PR: see linked PR in commit body.
+- (future devs: thank Sentinel.)
+
+---
+
 ## 2026-05-19 — chris-cc — weekly digest moved to CF cron + GH/CF drift documented
 
 - New standalone Worker `goodsoilharvest-cron-digest` deployed on the AE LLC CF account (account `8e97b023...`). Source lives in `./cron-digest/` (wrangler.jsonc + index.ts, ~15 lines total). Cron `0 13 * * SUN` — Sundays 13:00 UTC (≈9 AM EDT / 8 AM EST). Calls apex `https://goodsoilharvest.com/api/notifications/digest` with `Authorization: Bearer $AGENT_API_SECRET`. Observability enabled. Deploy with `cd cron-digest && wrangler deploy --env llc`.
