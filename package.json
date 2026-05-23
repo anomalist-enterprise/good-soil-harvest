@@ -13,7 +13,7 @@
     "cf:typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.85.0",
+    "@anthropic-ai/sdk": "^0.91.1",
     "@paralleldrive/cuid2": "^3.3.0",
     "bcryptjs": "^3.0.3",
     "gray-matter": "^4.0.3",
